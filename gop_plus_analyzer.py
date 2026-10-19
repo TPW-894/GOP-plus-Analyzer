@@ -1,12 +1,12 @@
 # Copyright (C) 2026 TPW-894 / Licensed under GPL-3.0-or-later
 
-import atexit, json, math, os, shutil, subprocess, sys, tempfile
+import atexit, json, math, os, re, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal, QRectF, QPointF, QTimer
 from PySide6.QtGui import QColor, QPainter, QLinearGradient, QPalette, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (QApplication, QCheckBox, QFileDialog, QHBoxLayout, QLabel,
-                               QPushButton, QSlider, QSplitter, QStyle, QVBoxLayout, QWidget)
+                               QProgressBar, QPushButton, QSlider, QSplitter, QStyle, QVBoxLayout, QWidget)
 
 import block_render
 from i18n import LANG, settings, tr
@@ -31,6 +31,8 @@ QCheckBox::indicator:checked:disabled{image:url(@OND@);}
 QSlider#mid{background:palette(base);}
 QSlider#mid::groove:vertical{width:2px;background:palette(buttontext);}
 QSlider#mid::handle:vertical{width:10px;height:6px;margin:0 -4px;background:palette(buttontext);}
+QProgressBar{border:1px solid palette(mid);background:palette(base);text-align:center;height:14px;}
+QProgressBar::chunk{background:palette(highlight);}
 """
 
 
@@ -161,6 +163,7 @@ def kb(n):
 class Timeline(QWidget):
     info = Signal(str)
     selected = Signal(int, int, str)
+    playToggle = Signal()
     LANE_Y, LANE_H, BAR_Y = 20, 22, 60
 
     def __init__(self):
@@ -173,6 +176,7 @@ class Timeline(QWidget):
         self.sel = self.hov = -1
         self.scrub, self.pan_x = False, None
         self.gamma = 1.0
+        self.range, self.d2i = None, {}
 
     def set_frames(self, frames, dec=False):
         self.F = sorted(frames, key=lambda f: f[4]) if dec else list(frames)
@@ -183,9 +187,14 @@ class Timeline(QWidget):
                 self.gs.append(i)
             self.gi.append(g)
         self.maxS = max([f[1] for f in self.F] + [1])
+        self.d2i = {f[5]: i for i, f in enumerate(self.F)}
         self.sel = self.hov = -1
         self.fit()
         self.refresh_info()
+
+    def set_range(self, r):
+        self.range = r
+        self.update()
 
     def set_gamma(self, g):
         self.gamma = g
@@ -302,6 +311,8 @@ class Timeline(QWidget):
             d = -1 if e.key() == Qt.Key_Left else 1
             cur = self.sel if self.sel >= 0 else math.floor(self.off)
             self.select(max(0, min(len(self.F) - 1, cur + d)), True)
+        elif e.key() == Qt.Key_Space:
+            self.playToggle.emit()
         else:
             super().keyPressEvent(e)
 
@@ -327,6 +338,14 @@ class Timeline(QWidget):
         p.setPen(mu)
         p.drawText(QPointF(0, self.LANE_Y - 6), tr("lane_type"))
         p.drawText(QPointF(0, self.BAR_Y - 6), tr("lane_size", kb(self.maxS), kb(self.mid())))
+
+        if self.range:
+            ia, ib = self.d2i.get(self.range[0]), self.d2i.get(self.range[1])
+            if ia is not None and ib is not None:
+                x0, x1 = (min(ia, ib) - off) * ppf, (max(ia, ib) + 1 - off) * ppf
+                rc = QColor(fg)
+                rc.setAlpha(120)
+                p.fillRect(QRectF(x0, 0, max(x1 - x0, 2), 3), rc)
 
         if ppf >= 6:
             alt = QColor(fg)
@@ -508,6 +527,54 @@ class BlockWorker(QThread):
             self.failed.emit(str(ex))
 
 
+class Job(QThread):
+    progress = Signal(int)
+    done = Signal(bool)
+    failed = Signal(str)
+
+    def __init__(self, cmds):
+        super().__init__()
+        self.cmds, self.proc, self.stop, self.count = cmds, None, False, 0
+
+    def cancel(self):
+        self.stop = True
+        p = self.proc
+        if p and p.poll() is None:
+            p.terminate()
+
+    def run(self):
+        err = ""
+        for cmd in self.cmds:
+            if self.stop:
+                break
+            self.count = 0
+            try:
+                self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                             encoding="utf-8", errors="replace", creationflags=block_render.NOWIN)
+            except Exception as ex:
+                self.failed.emit(str(ex))
+                return
+            msgs = []
+            for line in self.proc.stdout:
+                line = line.strip()
+                if line.startswith("frame=") and line[6:].strip().isdigit():
+                    self.count = int(line[6:])
+                    self.progress.emit(self.count)
+                elif line and not re.match(r"^\w+=\S*$", line):
+                    msgs.append(line)
+            rc = self.proc.wait()
+            if self.stop:
+                break
+            if rc == 0 and self.count > 0:
+                self.done.emit(True)
+                return
+            err = err or "\n".join(msgs[-3:])
+        if self.stop:
+            self.done.emit(False)
+        else:
+            self.failed.emit(err or tr("err_noout"))
+
+
 class Main(QWidget):
     def __init__(self, dark=True):
         super().__init__()
@@ -516,6 +583,11 @@ class Main(QWidget):
         self.setAcceptDrops(True)
         self.data = None
         self.worker = None
+        self.job, self.complete, self.partial, self.range = None, set(), {}, None
+        self.playing, self.p_t0, self.p_n0, self.p_last, self.p_fps = False, 0.0, 0, 0, 30.0
+        self.pt = QTimer(self)
+        self.pt.setInterval(15)
+        self.pt.timeout.connect(self.play_tick)
 
         self.title = QLabel(tr("title_hint"))
         f = self.title.font()
@@ -571,8 +643,12 @@ class Main(QWidget):
                 c.setEnabled(False)
                 c.setChecked(False)
                 c.setToolTip(tr("cap_no") if ff else tr("ffmpeg_missing"))
-            c.toggled.connect(self.render_block)
+            c.toggled.connect(self.on_flags)
             ovbar.addWidget(c)
+        self.only = QCheckBox(tr("only"))
+        self.only.setToolTip(tr("only_tip"))
+        self.only.toggled.connect(self.on_flags)
+        ovbar.addWidget(self.only)
         b_reset = QPushButton(tr("fit_img"))
         b_reset.clicked.connect(self.iv.fit)
         self.bstat = QLabel("")
@@ -622,6 +698,40 @@ class Main(QWidget):
         sp.setSizes([300, 520])
         lay.addWidget(sp, 1)
         lay.addLayout(ovbar)
+
+        self.b_cache = QPushButton(tr("cache_btn"))
+        self.b_cache.setToolTip(tr("cache_tip"))
+        self.b_cache.clicked.connect(self.start_cache)
+        self.b_play = QPushButton(tr("play"))
+        self.b_play.setToolTip(tr("play_tip"))
+        self.b_play.clicked.connect(self.toggle_play)
+        b_in, b_out, b_all = QPushButton(tr("range_in")), QPushButton(tr("range_out")), QPushButton(tr("range_all"))
+        for b in (b_in, b_out, b_all):
+            b.setToolTip(tr("range_tip"))
+        b_in.clicked.connect(lambda: self.set_range(0))
+        b_out.clicked.connect(lambda: self.set_range(1))
+        b_all.clicked.connect(self.reset_range)
+        self.rlabel = QLabel(tr("range_whole"))
+        self.b_export = QPushButton(tr("export"))
+        self.b_export.setToolTip(tr("export_tip"))
+        self.b_export.clicked.connect(self.start_export)
+        self.pstat = QLabel("")
+        self.pbar = QProgressBar()
+        self.pbar.setMinimumWidth(160)
+        self.b_cancel = QPushButton(tr("cancel"))
+        self.b_cancel.clicked.connect(self.cancel_job)
+        self.pbar.setVisible(False)
+        self.b_cancel.setVisible(False)
+        actbar = QHBoxLayout()
+        for w in (self.b_cache, self.b_play, b_in, b_out, b_all, self.rlabel, self.b_export):
+            actbar.addWidget(w)
+        actbar.addStretch()
+        for w in (self.pstat, self.pbar, self.b_cancel):
+            actbar.addWidget(w)
+        lay.addLayout(actbar)
+        self.tl.playToggle.connect(self.toggle_play)
+        self.update_buttons()
+
         foot = QHBoxLayout()
         foot.addWidget(self.detail, 1)
         foot.addWidget(hint)
@@ -650,7 +760,13 @@ class Main(QWidget):
         self.outdir = TMP / f"v{self.vid}"
         self.outdir.mkdir(exist_ok=True)
         self.data, self.pending, self.prev, self.drawn = None, False, -1, -1
+        self.stop_play()
+        self.cancel_job()
+        self.complete, self.partial, self.range = set(), {}, None
         self.tl.set_frames([])
+        self.update_range()
+        self.pstat.setText("")
+        self.update_buttons()
         self.iv.show_msg(tr("iv_hint"))
         self.meta.setText("")
         self.stats.setText("")
@@ -682,6 +798,7 @@ class Main(QWidget):
             if not side["venc"]:
                 miss.append(tr("block_qp"))
         self.note.setText(tr("note", i["codec"], tr("sep").join(miss)) if miss else "")
+        self.update_buttons()
 
     def show_stats(self):
         F, gs = self.tl.F, self.tl.gs
@@ -700,47 +817,241 @@ class Main(QWidget):
                  (tr("st_br"), f"{sum(f[1] for f in F) * 8 / dur / 1e6:.2f} Mbps" if dur else "-")]
         self.stats.setText("　　".join(f"<span style='color:gray'>{k}</span> <b>{v}</b>" for k, v in items))
 
+    def flags(self):
+        o = {k: c.isChecked() and c.isEnabled() for k, c in self.ov.items()}
+        return o["mv"], o["block"], o["qp"], self.only.isChecked()
+
+    def lookup(self, n):
+        key = block_render.flags_key(*self.flags())
+        limit = None if key in self.complete else self.partial.get(key, 0)
+        return block_render.find_cached(self.outdir, n, key, limit)
+
+    def cur_disp(self):
+        return self.tl.F[self.tl.sel][5] if 0 <= self.tl.sel < len(self.tl.F) else None
+
+    def on_flags(self, *_):
+        self.stop_play()
+        self.update_buttons()
+        self.render_block()
+
     def render_block(self):
-        if not (self.data and self.src and 0 <= self.tl.sel < len(self.tl.F)):
+        n = self.cur_disp()
+        if not (self.data and self.src and n is not None):
+            return
+        hit = self.lookup(n)
+        if hit:
+            self.drawn = self.tl.sel
+            self.bstat.setText("")
+            self.iv.set_image(hit)
             return
         if self.busy:
-            self.pending = True
             return
-        n = self.tl.F[self.tl.sel][5]
         self.drawn = self.tl.sel
         self.busy = True
-        self.bstat.setText(tr("rendering", n))
-        opts = {k: c.isChecked() and c.isEnabled() for k, c in self.ov.items()}
+        QTimer.singleShot(200, lambda: self.bstat.setText(tr("rendering", n)) if self.busy else None)
+        opts = dict(zip(("mv", "block", "qp", "only"), self.flags()))
         w = BlockWorker(self.src, self.data["frames"], n, out_dir=self.outdir, **opts)
         self._keep.append(w)
         g = self.vid
-        w.done.connect(lambda path: self.on_block(path, g))
-        w.failed.connect(lambda m: self.on_block_fail(m, g))
+        w.done.connect(lambda path: self.on_block(path, g, n))
+        w.failed.connect(lambda m: self.on_block_fail(m, g, n))
         w.start()
 
-    def on_block(self, path, g=None):
+    def on_block(self, path, g=None, n=None):
         self.busy = False
         if g != self.vid:
             return
         self.bstat.setText("")
-        if self.pending:
-            self.pending = False
+        cur = self.cur_disp()
+        if cur is None:
+            return
+        if cur != n:
             self.render_block()
         else:
             self.iv.set_image(path)
 
-    def on_block_fail(self, msg, g=None):
+    def on_block_fail(self, msg, g=None, n=None):
         self.busy = False
         if g != self.vid:
             return
         self.bstat.setText(tr("render_err") + (msg.strip().splitlines() or [""])[-1])
-        if self.pending:
-            self.pending = False
+        if self.cur_disp() not in (None, n):
             self.render_block()
+
+    def update_buttons(self):
+        has = bool(self.data and self.src)
+        idle = self.job is None
+        key = block_render.flags_key(*self.flags())
+        self.b_cache.setEnabled(has and idle)
+        self.b_export.setEnabled(has and idle)
+        self.b_play.setEnabled(self.playing or (has and idle and key in self.complete))
+
+    def set_range(self, which):
+        n = self.cur_disp()
+        if not self.data or n is None:
+            return
+        a, b = self.range or (0, len(self.data["frames"]) - 1)
+        a, b = (n, max(b, n)) if which == 0 else (min(a, n), n)
+        self.range = (a, b)
+        self.update_range()
+
+    def reset_range(self):
+        self.range = None
+        self.update_range()
+
+    def update_range(self):
+        self.tl.set_range(self.range)
+        r = self.range
+        self.rlabel.setText(tr("range_label", r[0], r[1], r[1] - r[0] + 1) if r else tr("range_whole"))
+
+    def begin_job(self, job, total, kind, out=None):
+        self.job = job
+        g = self.vid
+        key = block_render.flags_key(*self.flags())
+        name = "caching" if kind == "cache" else "exporting"
+        self.pbar.setRange(0, max(1, total))
+        self.pbar.setValue(0)
+        self.pbar.setVisible(True)
+        self.b_cancel.setVisible(True)
+        self.pstat.setText(tr(name, 0, total))
+
+        def on_progress(c):
+            if g != self.vid:
+                return
+            self.pbar.setValue(min(c, total))
+            self.pstat.setText(tr(name, c, total))
+            if kind == "cache":
+                self.partial[key] = max(0, c - 2)
+
+        def finish():
+            if self.job is job:
+                self.job = None
+                self.pbar.setVisible(False)
+                self.b_cancel.setVisible(False)
+            self.update_buttons()
+
+        def on_done(ok):
+            finish()
+            if g != self.vid:
+                return
+            if kind == "cache":
+                if ok:
+                    self.complete.add(key)
+                    self.partial.pop(key, None)
+                    self.pstat.setText(tr("cache_done"))
+                else:
+                    keep = max(0, job.count - 2)
+                    for p in block_render.cache_dir(self.outdir, key).glob("*.jpg"):
+                        if int(p.stem) >= keep:
+                            p.unlink(missing_ok=True)
+                    self.partial[key] = keep
+                    self.pstat.setText(tr("canceled"))
+            elif ok:
+                self.pstat.setText(tr("export_done", out))
+            else:
+                Path(out).unlink(missing_ok=True)
+                self.pstat.setText(tr("canceled"))
+            self.update_buttons()
+
+        def on_failed(msg):
+            finish()
+            if g != self.vid:
+                return
+            if kind == "export" and out:
+                Path(out).unlink(missing_ok=True)
+            self.pstat.setText(tr("job_err") + (msg.strip().splitlines() or [""])[-1])
+
+        job.progress.connect(on_progress)
+        job.done.connect(on_done)
+        job.failed.connect(on_failed)
+        self._keep.append(job)
+        self.update_buttons()
+        job.start()
+
+    def cancel_job(self):
+        if self.job:
+            self.job.cancel()
+
+    def start_cache(self):
+        if self.job or not (self.data and self.src):
+            return
+        fl = self.flags()
+        key = block_render.flags_key(*fl)
+        try:
+            d, cmds = block_render.cache_commands(self.src, self.outdir, *fl)
+        except Exception as ex:
+            self.pstat.setText(tr("job_err") + str(ex))
+            return
+        shutil.rmtree(d, ignore_errors=True)
+        d.mkdir(parents=True, exist_ok=True)
+        self.complete.discard(key)
+        self.partial[key] = 0
+        self.begin_job(Job(cmds), len(self.data["frames"]), "cache")
+
+    def start_export(self):
+        if self.job or not (self.data and self.src):
+            return
+        frames = self.data["frames"]
+        a, b = self.range or (0, len(frames) - 1)
+        default = str(Path(self.src).with_name(Path(self.src).stem + "_overlay.mp4"))
+        path, _ = QFileDialog.getSaveFileName(self, tr("export_title"), default, tr("export_filter"))
+        if not path:
+            return
+        fps = self.data["info"]["fps"] or 30.0
+        try:
+            cmds = block_render.export_commands(self.src, frames, a, b, fps, path, *self.flags())
+        except Exception as ex:
+            self.pstat.setText(tr("job_err") + str(ex))
+            return
+        self.begin_job(Job(cmds), b - a + 1, "export", path)
+
+    def toggle_play(self):
+        if self.playing:
+            self.stop_play()
+            return
+        key = block_render.flags_key(*self.flags())
+        if self.job or key not in self.complete or not self.tl.F:
+            return
+        n0 = self.cur_disp() or 0
+        if self.dec.isChecked():
+            self.dec.setChecked(False)
+        if n0 >= len(self.tl.F) - 1:
+            n0 = 0
+        self.playing = True
+        self.p_n0, self.p_last = n0, n0
+        self.p_fps = self.data["info"]["fps"] or 30.0
+        self.p_t0 = time.perf_counter()
+        self.b_play.setText(tr("stop"))
+        self.pt.start()
+
+    def stop_play(self):
+        if self.playing:
+            self.playing = False
+            self.pt.stop()
+            self.b_play.setText(tr("play"))
+            self.update_buttons()
+
+    def play_tick(self):
+        last = len(self.tl.F) - 1
+        n = self.p_n0 + int((time.perf_counter() - self.p_t0) * self.p_fps)
+        end = n >= last
+        n = min(n, last)
+        if n != self.p_last:
+            self.p_last = n
+            self.tl.select(n, True)
+            hit = self.lookup(self.tl.F[n][5])
+            if hit:
+                self.iv.set_image(hit)
+        if end:
+            self.stop_play()
 
     MAX_SWITCH = 3
 
     def on_selected(self, *_):
+        if self.playing:
+            if self.tl.sel == self.p_last:
+                return
+            self.stop_play()
         if not self.rt.isActive():
             self.rt.start()
 
