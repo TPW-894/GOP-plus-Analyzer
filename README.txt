@@ -16,6 +16,8 @@ BOOTH                      : https://tpw-894.booth.pm
   - GOPタイムライン: I / P / B フレームを色分けして並べ、フレームごとのサイズを棒グラフで表示
   - GOPの統計: フレーム数、GOP数、GOP長(平均/最大/最小)、種別ごとの平均サイズ、平均ビットレート
   - ブロック情報のオーバーレイ表示: 選択したフレームに 動きベクトル / ブロック分割 / QP をオーバーレイで表示
+  - オーバーレイのみの表示、全フレームのキャッシュ生成と連続再生
+  - 範囲を指定した、オーバーレイ付き動画 (MP4) の書き出し
   - ダークモード、日本語/English 表示
 
 ■ 動作環境
@@ -33,6 +35,8 @@ BOOTH                      : https://tpw-894.booth.pm
   1. "GOP+ Analyzer.exe" を起動し、動画ファイルをウィンドウにドロップするか、「開く...」ボタンから選択します。
   2. 解析が終わると、タイムラインに全フレームが表示されます。
   3. タイムライン上でフレームをクリックすると、そのフレームの画像と、ブロック情報がオーバーレイで表示されます。
+  4. 「キャッシュ生成」で全フレームを描画しておくと、「再生」で連続再生できます。
+  5. 「開始点」「終了点」で範囲を決め、「動画を書き出し...」でオーバーレイ付きのMP4を保存できます。
 
 ■ 操作
   タイムライン
@@ -47,6 +51,12 @@ BOOTH                      : https://tpw-894.booth.pm
     マウスホイール        拡大 / 縮小
     ドラッグ              移動
     ダブルクリック        全体表示
+  オーバーレイ・再生・書き出し
+    「オーバーレイのみ」  動画の画像を使わず、オーバーレイだけを暗い背景に表示
+    「キャッシュ生成」    現在のオーバーレイ設定で全フレームを描画して保存 (進捗表示・キャンセル可)
+    「再生」 / Space      キャッシュ生成後に、連続再生 / 停止 (オーバーレイ設定を変えると再度キャッシュが必要)
+    「開始点」「終了点」  選択中のフレームを、書き出し範囲の開始 / 終了にする (「全体」で解除)
+    「動画を書き出し...」 指定した範囲を、現在のオーバーレイ設定でMP4に保存 (音声なし。進捗表示・キャンセル可)
   その他
     「JSONを保存...」     解析結果(フレーム一覧)をJSONで保存
     「ダークモード」      表示テーマの切り替え
@@ -60,7 +70,9 @@ BOOTH                      : https://tpw-894.booth.pm
 ■ 注意
   - ブロック情報のオーバーレイは FFmpeg の codecview フィルタで画像に描画しているため、
     線の太さは動画の解像度に依存します。
-  - 解析中に作る一時ファイルは、%TEMP%\gop_plus_analyzer_* に保存され、終了時に自動で削除されます。
+  - 解析やキャッシュで作る一時ファイルは、%TEMP%\gop_plus_analyzer_* に保存され、終了時に自動で削除されます。
+    キャッシュは全フレーム分の画像になるため、動画によっては容量が大きくなります。
+  - 書き出しは H.264 (MP4) で、音声は含まれません。
   - 設定 (言語、ダークモード) は、レジストリ HKEY_CURRENT_USER\Software\TPW-894\GOP-Plus-Analyzer
     に保存されます。削除するときはフォルダを消し、必要ならこのキーも削除してください。
   - 動画の内容をネットワークへ送信することはありません (通信機能はありません)。
@@ -85,6 +97,8 @@ A tool that inspects and displays the frame structure of a video file.
   - GOP timeline: I / P / B frames shown in color, with a per-frame size bar graph
   - GOP statistics: frame count, GOP count, GOP length (avg/max/min), average size per type, average bitrate
   - Block information overlay: motion vectors / block partitions / QP drawn over the selected frame
+  - Overlay-only view, full-frame cache generation and continuous playback
+  - Export of a selected range as a video (MP4) with the overlay
   - Dark mode, Japanese / English UI
 
 * Requirements
@@ -102,6 +116,8 @@ A tool that inspects and displays the frame structure of a video file.
   1. Run "GOP+ Analyzer.exe", then drop a video file onto the window or select one with the "Open..." button.
   2. When analysis finishes, all frames are shown on the timeline.
   3. Click a frame on the timeline to see its image with the block information overlay.
+  4. Build the cache to render all frames in advance, then use "Play" for continuous playback.
+  5. Set the range with "Set in" / "Set out", then save an MP4 with the overlay using "Export video...".
 
 * Controls
   Timeline
@@ -116,6 +132,12 @@ A tool that inspects and displays the frame structure of a video file.
     Mouse wheel             Zoom in / out
     Drag                    Pan
     Double-click            Fit to window
+  Overlay / playback / export
+    "Overlay only"          Show only the overlay on a dark background, without the video image
+    "Build cache"           Render all frames with the current overlay settings (progress, cancelable)
+    "Play" / Space          Play / stop after the cache is built (changing overlay settings needs a new cache)
+    "Set in" / "Set out"    Use the selected frame as the start / end of the export range ("All" clears it)
+    "Export video..."       Save the range to MP4 with the current overlay settings (no audio; progress, cancelable)
   Other
     "Save JSON..."          Save the analysis result (frame list) as JSON
     "Dark mode"             Switch the theme
@@ -129,7 +151,9 @@ A tool that inspects and displays the frame structure of a video file.
 * Notes
   - The block information overlay is drawn into the image by FFmpeg's codecview filter, so line thickness
     depends on the video resolution.
-  - Temporary files created during analysis are stored in %TEMP%\gop_plus_analyzer_* and deleted automatically on exit.
+  - Temporary files created during analysis and caching are stored in %TEMP%\gop_plus_analyzer_* and deleted automatically on exit.
+    The cache contains an image for every frame, so it can become large for some videos.
+  - Exported videos are H.264 (MP4) and contain no audio.
   - Settings (language, dark mode) are stored in
     HKEY_CURRENT_USER\Software\TPW-894\GOP-Plus-Analyzer.
     To uninstall, delete the folder (and this registry key, if you wish).
