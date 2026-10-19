@@ -87,7 +87,7 @@ BOOTH                      : https://tpw-894.booth.pm
   THIRD_PARTY_NOTICES.txt と licenses フォルダ (BOOTHの配布パッケージに含まれます) を参照してください。
 
 ■ 連絡先
-  不具合・質問・要望: BOOTHのメッセージ / X: <URL> / マシュマロ: <URL> / GitHub Issues
+  不具合・質問・要望: BOOTHのメッセージ / X: https://x.com/ThisPageIsWhite / マシュマロ: https://marshmallow-qa.com/vo8zg8d60oy3zrs / GitHub Issues / Discord: thispageiswhite
 
 
 ==============================================================
@@ -172,4 +172,4 @@ A tool that inspects and displays the frame structure of a video file.
   see THIRD_PARTY_NOTICES.txt and the "licenses" folder (included in the BOOTH package).
 
 * Contact
-  Bug reports, questions and feature requests: BOOTH message / X: <URL> / Marshmallow: <URL> / GitHub Issues
+  Bug reports, questions and feature requests: BOOTH message / X: https://x.com/ThisPageIsWhite / Marshmallow: https://marshmallow-qa.com/vo8zg8d60oy3zrs / GitHub Issues / Discord: thispageiswhite
