@@ -86,6 +86,9 @@ BOOTH                      : https://tpw-894.booth.pm
   同梱している第三者ソフトウェア (FFmpeg、Python、Qt for Python など) については、
   THIRD_PARTY_NOTICES.txt と licenses フォルダ (BOOTHの配布パッケージに含まれます) を参照してください。
 
+■ 連絡先
+  不具合・質問・要望: BOOTHのメッセージ / X: <URL> / マシュマロ: <URL> / GitHub Issues
+
 
 ==============================================================
 English
@@ -167,3 +170,6 @@ A tool that inspects and displays the frame structure of a video file.
 
   For bundled third-party software (FFmpeg, Python, Qt for Python, etc.),
   see THIRD_PARTY_NOTICES.txt and the "licenses" folder (included in the BOOTH package).
+
+* Contact
+  Bug reports, questions and feature requests: BOOTH message / X: <URL> / Marshmallow: <URL> / GitHub Issues
