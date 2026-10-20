@@ -86,6 +86,12 @@ BOOTH                      : https://tpw-894.booth.pm
   同梱している第三者ソフトウェア (FFmpeg、Python、Qt for Python など) については、
   THIRD_PARTY_NOTICES.txt と licenses フォルダ (BOOTHの配布パッケージに含まれます) を参照してください。
 
+■ 利用条件
+  - このソフトで出力した動画は、映像作品などに自由にお使いいただけます。(元の動画の権利は、元の権利者に帰属します)
+  - 改変・二次配布は、GPL-3.0-or-later の条件に従って行えます。(LICENSEの同梱、著作権表示の保持、ソースコードの提供など)
+  - 二次配布や、改変したものを頒布する場合は、配布元として当ショップまたはGitHubのURLを記載していただけると助かります。
+  - 同梱のFFmpeg、Pythonなどの第三者ソフトウェアには、それぞれのライセンスがあります。再配布する場合は、THIRD_PARTY_NOTICES.txt と licenses フォルダを参照し、各ライセンスに従ってください。
+
 ■ 連絡先
   不具合・質問・要望: BOOTHのメッセージ / X: https://x.com/ThisPageIsWhite / マシュマロ: https://marshmallow-qa.com/vo8zg8d60oy3zrs / GitHub Issues / Discord: thispageiswhite
 
@@ -170,6 +176,17 @@ A tool that inspects and displays the frame structure of a video file.
 
   For bundled third-party software (FFmpeg, Python, Qt for Python, etc.),
   see THIRD_PARTY_NOTICES.txt and the "licenses" folder (included in the BOOTH package).
+
+* Terms of use
+  - Videos exported with this software may be used freely, including in video works.
+    (Rights to the original video remain with its rights holder.)
+  - You may modify and redistribute this software under the terms of GPL-3.0-or-later
+    (include the LICENSE file, keep the copyright notices, and provide the source code).
+  - If you redistribute this software or a modified version, we would appreciate it if you
+    credit the original distribution, such as the BOOTH shop or GitHub URL above.
+  - The bundled third-party software, such as FFmpeg and Python, has its own licenses.
+    If you redistribute it, see THIRD_PARTY_NOTICES.txt and the "licenses" folder,
+    and comply with each license.
 
 * Contact
   Bug reports, questions and feature requests: BOOTH message / X: https://x.com/ThisPageIsWhite / Marshmallow: https://marshmallow-qa.com/vo8zg8d60oy3zrs / GitHub Issues / Discord: thispageiswhite
